@@ -1,0 +1,17 @@
+#!/bin/sh
+# GitHub の ruleset と重複するが、hook はサーバに到達する前にローカルで止められる。
+set -eu
+
+# ruleset の ~DEFAULT_BRANCH と判定対象を揃える。
+default=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true)
+[ -n "$default" ] || default='main'
+protected="refs/heads/$default"
+
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  [ -n "${remote_ref:-}" ] || continue
+  if [ "$remote_ref" = "$protected" ]; then
+    echo "pre-push: $protected への直接 push は禁止されています。" >&2
+    echo "  トピックブランチを push し、PR を作成してください。" >&2
+    exit 1
+  fi
+done

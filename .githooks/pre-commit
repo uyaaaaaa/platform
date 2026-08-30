@@ -1,0 +1,39 @@
+#!/bin/sh
+# GitHub の ruleset と重複するが、hook は push を待たずコミット時点で止められる。
+set -eu
+
+# ruleset の ~DEFAULT_BRANCH と判定対象を揃える。
+protected=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true)
+[ -n "$protected" ] || protected='main'
+branch=$(git symbolic-ref --quiet --short HEAD || echo '')
+
+if [ "$branch" = "$protected" ]; then
+  echo "pre-commit: $protected への直接コミットは禁止されています。" >&2
+  echo "  git switch -c <branch> でトピックブランチを作成してください。" >&2
+  exit 1
+fi
+
+# 検査対象は追加行のみ。既存行は公開済みであり、ここで止めても手遅れである。
+secret='gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,}|sk-[A-Za-z0-9_-]{32,}|(AKIA|ASIA)[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+placeholder='x{4,}|example|placeholder|change_?me|dummy'
+
+git diff --cached --name-only --diff-filter=ACM | while IFS= read -r file; do
+  [ -n "$file" ] || continue
+
+  case "$file" in
+    # 雛形は秘密情報検査からも外すため ;; ではなく continue とする。
+    *.example|*.sample|*.template) continue ;;
+    .env|.env.*|*/.env|*/.env.*)
+      echo "pre-commit: 環境変数ファイルはコミットできません: $file" >&2
+      echo "  値を伴わない雛形は .env.example として置いてください。" >&2
+      exit 1
+      ;;
+  esac
+
+  hits=$(git diff --cached -U0 -- "$file" | grep '^+' | grep -v '^+++' | grep -E "$secret" | grep -ivE "$placeholder" || true)
+  if [ -n "$hits" ]; then
+    echo "pre-commit: 秘密情報らしき文字列を検出しました: $file" >&2
+    echo "  値を環境変数に移すか、誤検出であれば git commit --no-verify で通してください。" >&2
+    exit 1
+  fi
+done
