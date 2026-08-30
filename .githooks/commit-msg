@@ -1,0 +1,38 @@
+#!/bin/sh
+set -eu
+
+msg_file="$1"
+
+# git commit -v はメッセージファイルにコメント行と diff を書き込む。
+header=$(grep -v '^#' "$msg_file" | sed '/^[[:space:]]*$/d' | head -n 1 || true)
+
+if [ -z "$header" ]; then
+  echo "commit-msg: コミットメッセージが空です。" >&2
+  exit 1
+fi
+
+# これらは Git が自動生成するため、形式を満たしようがない。
+case "$header" in
+  Merge\ *|Revert\ *|fixup!\ *|squash!\ *|amend!\ *) exit 0 ;;
+esac
+
+types='build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test'
+
+if ! printf '%s' "$header" | grep -Eq "^($types)(\([a-z0-9._/-]+\))?!?: .+"; then
+  echo "commit-msg: Conventional Commits 形式ではありません。" >&2
+  echo "  実際: $header" >&2
+  echo "  形式: <type>[(scope)][!]: <description>" >&2
+  echo "  type: $types" >&2
+  echo "  例  : feat(ledger): 月次集計を追加" >&2
+  exit 1
+fi
+
+# squash merge により main の各コミット件名が PR タイトルになる。
+# wc -m はロケールによってバイト数を返し判定が揺れる。
+max=72
+len=$(printf '%s' "$header" | LC_ALL=C tr -d '\200-\277' | wc -c | tr -d ' ')
+if [ "$len" -gt "$max" ]; then
+  echo "commit-msg: ヘッダが ${max} 文字を超えています (${len} 文字)。" >&2
+  echo "  詳細は本文に書いてください。" >&2
+  exit 1
+fi
