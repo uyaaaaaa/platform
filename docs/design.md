@@ -21,6 +21,8 @@
 * クライアント実装(ネイティブ配布を含む)
 * 利用者とテナンシーの意味論
 
+クライアント実装をスコープへ入れるかは #17 で検討中であり、`templates/flutter/` はその受け皿として枠のみ用意してある。
+
 ## コスト方針
 
 * 1プロダクトあたりのランニングコストは月 $3 以下とする。ドメイン代とストア配布費(Apple Developer Program 等)はプロダクト固有の初期投資として枠外に置く。
@@ -37,7 +39,11 @@
 | `template-*` | プロダクトの骨。`platform` への参照と規約ファイルのみを含む template repository | public |
 | プロダクト | 1プロダクト = 1リポジトリ。`template-*` から生成する | プロダクトごと |
 
-共通部分はコピーではなく参照で配る。CI は reusable workflow(`uses: <owner>/platform/.github/workflows/<name>.yml@v1`)、IaC は Terraform module(`source = "git::...//modules/<name>?ref=v1"`)として参照する。コピー配布では基盤側の改善が既存プロダクトに届かず、配った瞬間から腐るためである。
+共通部分はコピーではなく参照で配る。CI は reusable workflow(`uses: <owner>/platform/.github/workflows/<name>.yml@v1`)、IaC は Terraform module(`source = "git::...//templates/infra/modules/<name>?ref=v1"`)として参照する。コピー配布では基盤側の改善が既存プロダクトに届かず、配った瞬間から腐るためである。
+
+platform の中では、テンプレートを技術領域ごとに `templates/<領域>/` へ分けて置き、利用時に実行するセットアップスクリプトを各領域の直下に `setup.sh` として置く。領域ごとに配布方法(参照かコピーか)も実行すべき手順も異なるため、領域を跨いだ共通の入口を1つ設けても分岐が増えるだけである。
+
+reusable workflow だけはこの分類から外れ、`.github/workflows/` 直下に置く。GitHub が他リポジトリからの参照先をこの場所に限定しており、選択の余地がないためである。
 
 `v1` は移動タグとし、`platform` の main へのマージで CI が自動的に動かす。手動タグは単独開発では自己承認のセレモニーにしかならず、「マージ済みだが未リリース」という中間状態を生むためである。バージョン固定(semver)を採らないのは、利用者が単一である限り「全プロダクトが同時に壊れる」リスクより「更新が取り込まれず腐る」リスクのほうが大きいためである。
 
@@ -132,6 +138,6 @@ CI(reusable workflow)はプロダクトに対して「何を実行すればよ�
 
 ## リポジトリ規約(ガードレール)
 
-* git hooks(Conventional Commits 検証、main への直接コミット/push 禁止、秘密情報らしき文字列の検出)は `template-*` 経由で各リポジトリにコピーし、クローンごとに `git config core.hooksPath .githooks` で有効化する。
+* git hooks(Conventional Commits 検証、main への直接コミット/push 禁止、秘密情報らしき文字列の検出)は `template-*` 経由で各リポジトリにコピーし、クローンごとに github テンプレートの `setup.sh` を実行して `core.hooksPath` を向ける。
 * hooks は参照配布できず伝播しないため、強制すべき検査は reusable workflow 側にも同等の実装を置く。hooks は早期検知の補助であり、CI を正とする。
 * GitHub のリポジトリ設定と ruleset は `gh api` を用いたスクリプトを正とし、管理画面での直接編集は行わない。
