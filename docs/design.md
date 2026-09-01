@@ -23,6 +23,21 @@
 
 クライアント実装をスコープへ入れるかは #17 で検討中であり、`templates/flutter/` はその受け皿として枠のみ用意してある。
 
+## 実装状況
+
+本書は目標状態を定義しており、記述の大半はまだ実装されていない。現時点で実体があるのは次のものだけである。
+
+| 対象 | 状態 |
+|---|---|
+| リポジトリ設定・ruleset・git hooks | `templates/github/` にあり、本リポジトリへ適用済み |
+| `v1` 移動タグの CI | `.github/workflows/move-v1-tag.yml` にあり |
+| reusable workflows | 未着手。`.github/workflows/` にあるのは本リポジトリ自身の CI のみ |
+| Terraform modules | 未着手 |
+| `template-*` リポジトリ | 未作成 |
+| Flutter テンプレート | 未着手(#17) |
+
+Cloudflare のアカウント構成、CI/CD パイプライン、バックアップ、可観測性、廃棄手順は文書上の定義のみで、対応する実体は無い。設計と実装の差を追跡する場所を本書の外に作ると必ず片方が腐るため、ここに置く。
+
 ## コスト方針
 
 * 1プロダクトあたりのランニングコストは月 $3 以下とする。ドメイン代とストア配布費(Apple Developer Program 等)はプロダクト固有の初期投資として枠外に置く。
@@ -35,7 +50,7 @@
 
 | 種別 | 内容 | 可視性 |
 |---|---|---|
-| `platform` | reusable workflows と Terraform modules の実体。`v1` タグを打つ対象 | public |
+| `platform` | reusable workflows・Terraform modules・各領域のテンプレートの実体。`v1` タグを打つ対象 | public |
 | `template-*` | プロダクトの骨。`platform` への参照と規約ファイルのみを含む template repository | public |
 | プロダクト | 1プロダクト = 1リポジトリ。`template-*` から生成する | プロダクトごと |
 
@@ -44,6 +59,8 @@
 platform の中では、テンプレートを技術領域ごとに `templates/<領域>/` へ分けて置き、利用時に実行するセットアップスクリプトを各領域の直下に `setup.sh` として置く。領域ごとに配布方法(参照かコピーか)も実行すべき手順も異なるため、領域を跨いだ共通の入口を1つ設けても分岐が増えるだけである。
 
 reusable workflow だけはこの分類から外れ、`.github/workflows/` 直下に置く。GitHub が他リポジトリからの参照先をこの場所に限定しており、選択の余地がないためである。
+
+`templates/<領域>/` と `template-*` は供給元と配布物の関係にある。`template-*` は GitHub の template repository 機能でプロダクトのリポジトリを生成するための骨であり、その中身のうちコピー配布するもの(git hooks、アプリ雛形)は `templates/` を正として取り込む。参照配布するもの(reusable workflow、Terraform module)は `template-*` には参照だけを置く。実体を2箇所で管理すると必ず食い違うため、`template-*` 側は常に platform から取り込んだ結果とし、そこで編集しない。
 
 `v1` は移動タグとし、`platform` の main へのマージで CI が自動的に動かす。手動タグは単独開発では自己承認のセレモニーにしかならず、「マージ済みだが未リリース」という中間状態を生むためである。バージョン固定(semver)を採らないのは、利用者が単一である限り「全プロダクトが同時に壊れる」リスクより「更新が取り込まれず腐る」リスクのほうが大きいためである。
 
@@ -138,6 +155,6 @@ CI(reusable workflow)はプロダクトに対して「何を実行すればよ�
 
 ## リポジトリ規約(ガードレール)
 
-* git hooks(Conventional Commits 検証、main への直接コミット/push 禁止、秘密情報らしき文字列の検出)は `template-*` 経由で各リポジトリにコピーし、クローンごとに github テンプレートの `setup.sh` を実行して `core.hooksPath` を向ける。
+* git hooks(Conventional Commits 検証、main への直接コミット/push 禁止、秘密情報らしき文字列の検出)は `templates/github/githooks/` を正とし、`template-*` 経由で各リポジトリにコピーする。クローンごとに github テンプレートの `setup.sh` を実行して `core.hooksPath` を向ける。
 * hooks は参照配布できず伝播しないため、強制すべき検査は reusable workflow 側にも同等の実装を置く。hooks は早期検知の補助であり、CI を正とする。
 * GitHub のリポジトリ設定と ruleset は `gh api` を用いたスクリプトを正とし、管理画面での直接編集は行わない。
