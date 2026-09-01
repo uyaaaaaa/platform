@@ -1,0 +1,54 @@
+# 依存方向。唯一の不変条件であり、違反は error として扱う。
+#
+#   ui → data/repositories → data/services
+#   ui, data → domain/models
+#
+severity: error
+
+rules:
+  - reason: domain 層は他のどの層にも依存しない。Flutter にも依存しない。
+    target: lib/domain/**
+    disallow: "**"
+    exclude_disallow:
+      - lib/domain/**
+      - dart:*
+      - package:json_annotation/json_annotation.dart
+
+  - reason: data 層から ui / routing / config への依存は禁止。依存は一方向に保つ。
+    target: lib/data/**
+    disallow:
+      - lib/ui/**
+      - lib/routing/**
+      - lib/config/**
+
+  - reason: Service は状態も上位の文脈も持たない。Repository を知ってはならない。
+    target: lib/data/services/**
+    disallow: lib/data/repositories/**
+
+  - reason: ui 層が触れてよいのは Repository までである。Service を直接使わない。
+    target: lib/ui/**
+    disallow: lib/data/services/**
+
+  - reason: ui/core は個別の機能に依存しない。共有物が機能を知ると共有でなくなる。
+    target: lib/ui/core/**
+    disallow: lib/ui/**
+    exclude_disallow: lib/ui/core/**
+
+  # 機能どうしの隔離は、機能ごとに1ブロックずつ書く。glob に後方参照が無く、
+  # lib/ui/<feature>/<種別>/ という2階層を一般形として表現できないためである
+  # ($TARGET_DIR は対象ファイルの親ディレクトリを指すため、機能の境界に届かない)。
+  # 機能を追加したらここにも追加する。追加漏れは tool/check_import_rules.sh が
+  # 検出するため、規約が黙って緩むことはない。
+  - reason: 機能どうしは直接依存しない。共有したいものは ui/core へ上げる。
+    target: lib/ui/auth/**
+    disallow: lib/ui/**
+    exclude_disallow:
+      - lib/ui/auth/**
+      - lib/ui/core/**
+
+  - reason: 機能どうしは直接依存しない。共有したいものは ui/core へ上げる。
+    target: lib/ui/items/**
+    disallow: lib/ui/**
+    exclude_disallow:
+      - lib/ui/items/**
+      - lib/ui/core/**
