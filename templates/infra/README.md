@@ -1,6 +1,7 @@
 # infra テンプレート
 
-Terraform modules の実体を置く。
+Terraform modules の実体を置く。Cloudflare のトポロジと運用に関する判断は
+[design.md](design.md) にある。
 
 ```
 templates/infra/

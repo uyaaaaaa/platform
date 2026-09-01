@@ -2,7 +2,7 @@
 
 個人開発プロダクト群が共通利用する基盤。GitHub Actions の reusable workflows と Terraform modules を提供し、各プロダクトのリポジトリは `@v1` タグでこれらを参照する。
 
-設計は [docs/design.md](docs/design.md) に定義する。
+領域を跨ぐ設計は [docs/design.md](docs/design.md) に、領域固有の設計は各テンプレート配下に定義する。
 
 ## ディレクトリ構成
 
@@ -12,7 +12,7 @@
 templates/
   github/     # リポジトリ設定・ruleset・git hooks
   infra/      # Terraform modules
-  flutter/    # Flutter クライアント雛形(未着手, #17)
+  flutter/    # Flutter クライアント雛形
 .github/
   workflows/  # reusable workflows と本リポジトリ自身の CI
 ```
