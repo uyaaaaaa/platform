@@ -1,9 +1,18 @@
 #!/bin/sh
-# 設定の正はこのスクリプトと ruleset-main.json であり、GitHub の管理画面ではない。
+# GitHub 関連のセットアップ。設定の正はこのスクリプトと ruleset-main.json であり、
+# GitHub の管理画面ではない。テンプレートをコピーした先でも動くよう、参照はすべて
+# このスクリプトからの相対で解決する。
 set -eu
 
+dir=$(cd "$(dirname "$0")" && pwd)
+root=$(git rev-parse --show-toplevel)
+
+# hooks は参照配布できないため、テンプレートをコピーした側で有効化する必要がある。
+# core.hooksPath の相対パスは作業ツリーの最上位から解決されるため、そこからの相対に直す。
+git config core.hooksPath "${dir#"$root"/}/githooks"
+echo "hooks: ${dir#"$root"/}/githooks"
+
 repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
-dir=$(dirname "$0")
 
 # 件名を PR から生成することで、commit-msg hook が検証した件名が main の履歴に残る。
 gh api -X PATCH "repos/$repo" \
