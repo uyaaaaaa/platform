@@ -24,5 +24,5 @@ sh templates/github/setup.sh
 ## 規約
 
 * git hooks(Conventional Commits 検証、main への直接コミット/push 禁止、秘密情報らしき文字列の検出)は `githooks/` を正とし、`template-*` 経由で各リポジトリにコピーする。クローンごとに `setup.sh` を実行して `core.hooksPath` を向ける。
-* hooks は参照配布できず伝播しないため、強制すべき検査は reusable workflow 側にも同等の実装を置く。hooks は早期検知の補助であり、CI を正とする。
+* hooks は参照配布できず伝播しないため、強制すべき検査は reusable workflow 側にも同等の実装を置く(`worker-cicd.yml` の `guard` job)。hooks は早期検知の補助であり、CI を正とする。二重実装であるため、片方を変えたらもう片方も変える。
 * GitHub のリポジトリ設定と ruleset は `gh api` を用いたスクリプトを正とし、管理画面での直接編集は行わない。

@@ -3,6 +3,10 @@ name: worker-cicd
 # Cloudflare Workers プロダクトのアプリ CI/CD。プロダクトのリポジトリから
 # @v1 で参照する。
 #
+# 中身は infra 領域(Cloudflare)に属する。ここに置いてあるのは GitHub が他リポジトリ
+# からの参照先を .github/workflows/ 直下に限定しているためであり、設計と使い方は
+# templates/infra/ にある。
+#
 #   jobs:
 #     cicd:
 #       uses: uyaaaaaa/platform/.github/workflows/worker-cicd.yml@v1
