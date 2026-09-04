@@ -30,11 +30,6 @@ class ItemEditorState {
   );
 }
 
-/// 保存の状態。
-///
-/// 予期する失敗(バリデーション・競合)は sealed 型として返ってくるため、
-/// switch で網羅が保証される。予期しない失敗は投げたままにして
-/// 画面側の AsyncValue に載せる。
 class ItemEditorViewModel extends Notifier<ItemEditorState> {
   @override
   ItemEditorState build() => const ItemEditorState();

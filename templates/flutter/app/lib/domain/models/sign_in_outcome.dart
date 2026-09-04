@@ -1,4 +1,3 @@
-/// サインインの結果のうち、呼び出し側が必ず分岐すべきもの。
 sealed class SignInOutcome {
   const SignInOutcome();
 }

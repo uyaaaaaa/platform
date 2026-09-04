@@ -11,7 +11,6 @@ class ApiResponse {
   final String body;
 }
 
-/// 呼び出し側が回復できない失敗。ViewModel は捕捉せず AsyncValue に載せる。
 class ApiException implements Exception {
   ApiException(this.message);
 
@@ -29,11 +28,6 @@ abstract class ApiClient {
   });
 }
 
-/// HTTP の関心事だけを持つ。状態は持たない。
-///
-/// 401 を受けてリフレッシュし元のリクエストを再送する処理をここに置くのは、
-/// これが HTTP の関心事だからである。Repository 側に置くと、すべての
-/// Repository が同じ再送処理を持つことになる。
 class HttpApiClient implements ApiClient {
   HttpApiClient({
     required this.client,
@@ -57,8 +51,6 @@ class HttpApiClient implements ApiClient {
 
     final refreshed = await _refresh(current);
     if (refreshed == null) {
-      // リフレッシュに失敗した時点でセッションは終わっている。保管を空にする
-      // ことで、これを監視している AuthRepository が状態を更新する。
       await tokenStore.clear();
       return response;
     }

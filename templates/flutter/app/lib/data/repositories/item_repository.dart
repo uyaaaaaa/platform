@@ -5,7 +5,6 @@ import '../../domain/models/item_save_outcome.dart';
 import '../services/api_client.dart';
 import '../services/response_cache.dart';
 
-/// Item の真実の源。キャッシュはこの中に閉じ、ViewModel はその存在を知らない。
 class ItemRepository {
   ItemRepository({
     required this.api,
@@ -21,13 +20,8 @@ class ItemRepository {
   final ResponseCache cache;
   final String userId;
 
-  /// 保存したレスポンスを鮮度とみなす期間。エンドポイント単位で宣言する。
   final Duration ttl;
 
-  /// 保存済みのレスポンスを先に流し、古ければ取得し直して流す。
-  ///
-  /// 起動のたびに API を叩かずに済むため、これは UX 要件であると同時に
-  /// Workers Free 枠を守るサーキットブレーカーでもある。
   Stream<List<Item>> watchItems() async* {
     final cached = await cache.read(_listKey);
     var served = false;
@@ -43,19 +37,13 @@ class ItemRepository {
       if (response.statusCode != 200) {
         throw ApiException('GET $_listPath failed with ${response.statusCode}');
       }
-      await cache.write(
-        key: _listKey,
-        body: response.body,
-        userId: userId,
-      );
+      await cache.write(key: _listKey, body: response.body, userId: userId);
       yield _decodeList(response.body);
     } on Exception {
-      // 保存済みのものを既に流していれば、取得できなかったことは失敗ではない。
       if (!served) rethrow;
     }
   }
 
-  /// 書き込みはオンラインを必須とする。送信キューも楽観的更新も持たない。
   Future<ItemSaveOutcome> saveItem(Item item) async {
     final response = await api.send(
       'PUT',

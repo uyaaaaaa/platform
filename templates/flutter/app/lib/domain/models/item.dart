@@ -2,10 +2,6 @@ import 'package:json_annotation/json_annotation.dart';
 
 part 'item.g.dart';
 
-/// 機能横断で共有するドメインモデル。
-///
-/// API が返す形と画面が必要とする形が一致している間は、DTO を別に立てず
-/// このモデルが両方を兼ねる。食い違いが生じた時点で DTO を分ける。
 @JsonSerializable()
 class Item {
   const Item({

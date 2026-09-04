@@ -9,8 +9,7 @@ import '../../fakes/fake_api_client.dart';
 import '../../fakes/fake_auth_token_store.dart';
 import '../../fakes/fake_response_cache.dart';
 
-const _tokensBody =
-    '{"accessToken":"a","refreshToken":"r","userId":"user-1"}';
+const _tokensBody = '{"accessToken":"a","refreshToken":"r","userId":"user-1"}';
 
 void main() {
   late FakeApiClient api;
@@ -24,11 +23,7 @@ void main() {
     });
     tokenStore = FakeAuthTokenStore();
     cache = FakeResponseCache();
-    repository = AuthRepository(
-      api: api,
-      tokenStore: tokenStore,
-      cache: cache,
-    );
+    repository = AuthRepository(api: api, tokenStore: tokenStore, cache: cache);
   });
 
   tearDown(() {
@@ -37,8 +32,10 @@ void main() {
   });
 
   test('サインインするとトークンが保管され、状態が signedIn になる', () async {
-    expect(await repository.signIn(email: 'a@example.com', password: 'p'),
-        isA<SignInSucceeded>());
+    expect(
+      await repository.signIn(email: 'a@example.com', password: 'p'),
+      isA<SignInSucceeded>(),
+    );
 
     await expectLater(
       repository.statusChanges,
@@ -50,8 +47,10 @@ void main() {
   test('401 は例外ではなく SignInRejected として返る', () async {
     api.responses['POST /auth/sign-in'] = const ApiResponse(401, '');
 
-    final outcome =
-        await repository.signIn(email: 'a@example.com', password: 'bad');
+    final outcome = await repository.signIn(
+      email: 'a@example.com',
+      password: 'bad',
+    );
 
     expect(outcome, isA<SignInRejected>());
   });
@@ -61,11 +60,7 @@ void main() {
       const AuthTokens(accessToken: 'a', refreshToken: 'r', userId: 'user-1'),
     );
     await repository.statusChanges.firstWhere((s) => s == AuthStatus.signedIn);
-    cache.seed(
-      key: 'GET /items',
-      body: '[]',
-      fetchedAt: DateTime.now(),
-    );
+    cache.seed(key: 'GET /items', body: '[]', fetchedAt: DateTime.now());
 
     await repository.signOut();
 

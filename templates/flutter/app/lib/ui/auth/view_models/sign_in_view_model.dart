@@ -8,7 +8,6 @@ class SignInState {
 
   final bool submitting;
 
-  /// 資格情報の誤りなど、利用者の行動につながる失敗だけを持つ。
   final String? message;
 }
 

@@ -19,7 +19,6 @@ final routerProvider = Provider<GoRouter>((ref) {
     initialLocation: Routes.items,
     refreshListenable: refresh,
     redirect: (context, state) {
-      // 認証状態の判断材料は AuthRepository の状態だけに限る。
       final status = ref.read(authRepositoryProvider).status;
       if (status == AuthStatus.unknown) return null;
 
@@ -47,8 +46,6 @@ final routerProvider = Provider<GoRouter>((ref) {
   );
 });
 
-/// go_router は Listenable を要求する。Riverpod の状態をそこへ橋渡しする
-/// だけの実装であり、状態そのものは持たない。
 class _AuthListenable extends ChangeNotifier {
   _AuthListenable(Ref ref) {
     _subscription = ref

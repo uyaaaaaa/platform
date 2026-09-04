@@ -7,7 +7,6 @@ import '../../../routing/routes.dart';
 import '../../core/widgets/async_value_view.dart';
 import '../view_models/item_list_view_model.dart';
 
-/// View はロジックを持たない。表示と、ViewModel への通知だけを行う。
 class ItemListScreen extends ConsumerWidget {
   const ItemListScreen({super.key});
 

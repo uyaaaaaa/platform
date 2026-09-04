@@ -1,17 +1,5 @@
 #!/bin/sh
-# Flutter クライアントの雛形を配置する。
-#
-# 使い方:
-#   sh templates/flutter/setup.sh [<配置先>] [<Bundle ID の org>]
-#
-# 既定の配置先は app/ である。モノレポでは app/(Flutter)と worker/
-# (Cloudflare Workers)が同居する。
-#
-# 何度実行しても同じ状態になる:
-#   * 規約ファイル(analysis_options.yaml / import_rules.yaml / tool/)は
-#     常に上書きする。platform を正とするためである。
-#   * 雛形(lib/ / test/ / pubspec.yaml)は既に在れば触らない。
-#     プロダクト側で育てたコードを消さないためである。
+# usage: sh setup.sh [<配置先>] [<Bundle ID の org>]
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -23,8 +11,6 @@ if ! command -v flutter >/dev/null 2>&1; then
   exit 1
 fi
 
-# パッケージ名は app に固定する。テストが package:app/... で参照するため、
-# ここが揺れると配置先ごとに import を書き換えることになる。
 if [ ! -d "$dest" ]; then
   echo "setup: $dest を作成します (org=$org)"
   flutter create --platforms=android,ios --project-name app --org "$org" "$dest"
@@ -40,7 +26,7 @@ chmod +x "$dest/tool/check_import_rules.sh"
 
 for dir in lib test; do
   if [ -n "$(ls -A "$dest/$dir" 2>/dev/null)" ]; then
-    # flutter create 直後の lib/main.dart だけの状態は雛形で置き換えてよい。
+    # flutter create 直後は lib/main.dart のみが存在する。
     if [ "$dir" = 'lib' ] && [ "$(find "$dest/lib" -type f | wc -l)" -eq 1 ]; then
       rm -rf "$dest/lib"
     else

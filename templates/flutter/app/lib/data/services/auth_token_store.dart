@@ -27,11 +27,6 @@ class AuthTokens {
   };
 }
 
-/// トークンの保管。状態は持たず、変更を通知するだけに留める。
-///
-/// この抽象は3条件テスト(揮発性がある / 実装が2つ以上ある / テストで実物が
-/// 使えない)のうち3つ目に合格する。OS の Keychain / Keystore はテストから
-/// 触れない。
 abstract class AuthTokenStore {
   Future<AuthTokens?> read();
 
@@ -39,7 +34,6 @@ abstract class AuthTokenStore {
 
   Future<void> clear();
 
-  /// 保管内容が変わったことだけを通知する。値は流さない。
   Stream<void> get changes;
 }
 

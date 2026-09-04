@@ -17,8 +17,6 @@ void main() {
   late FakeResponseCache cache;
 
   ProviderContainer build() {
-    // 差し替えるのは Repository だけで済む。DI の組み立てが config/ に
-    // 集まっているため、テストと本番の差がこの override に閉じる。
     return ProviderContainer.test(
       retry: noAutomaticRetry,
       overrides: [
@@ -36,7 +34,7 @@ void main() {
 
   test('取得できた一覧が data として現れる', () async {
     final container = build();
-    // provider は自動破棄されるため、購読を保ってから読む。
+    // provider は購読が無いと破棄されるため、読む前に購読する。
     container.listen(itemListViewModelProvider, (_, _) {});
 
     final items = await container.read(itemListViewModelProvider.future);
@@ -47,11 +45,7 @@ void main() {
   test('取得に失敗すると error になり、ViewModel は例外を捕まえない', () async {
     api.failure = ApiException('offline');
     final container = build();
-    container.listen(
-      itemListViewModelProvider,
-      (_, _) {},
-      onError: (_, _) {},
-    );
+    container.listen(itemListViewModelProvider, (_, _) {}, onError: (_, _) {});
 
     await expectLater(
       container.read(itemListViewModelProvider.future),

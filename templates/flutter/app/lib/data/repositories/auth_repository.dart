@@ -7,9 +7,6 @@ import '../services/api_client.dart';
 import '../services/auth_token_store.dart';
 import '../services/response_cache.dart';
 
-/// 認証状態の真実の源。
-///
-/// ルーティングはこの状態だけを見る。Service はトークンを扱うが状態は持たない。
 class AuthRepository {
   AuthRepository({
     required this.api,
@@ -46,7 +43,6 @@ class AuthRepository {
       body: {'email': email, 'password': password},
     );
 
-    // 資格情報の誤りは呼び出し側が必ず分岐すべき正常系であり、例外にしない。
     if (response.statusCode == 401) {
       return const SignInRejected('メールアドレスまたはパスワードが違います。');
     }
@@ -61,8 +57,6 @@ class AuthRepository {
   }
 
   Future<void> signOut() async {
-    // キャッシュの破棄はサインアウトの一部である。次に別のユーザーで開いた
-    // 画面に、前のユーザーのデータが残らないようにする。
     final previous = _userId;
     if (previous != null) await cache.clearUser(previous);
     await tokenStore.clear();

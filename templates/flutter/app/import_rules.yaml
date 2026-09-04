@@ -1,8 +1,3 @@
-# 依存方向。唯一の不変条件であり、違反は error として扱う。
-#
-#   ui → data/repositories → data/services
-#   ui, data → domain/models
-#
 severity: error
 
 rules:
@@ -34,11 +29,8 @@ rules:
     disallow: lib/ui/**
     exclude_disallow: lib/ui/core/**
 
-  # 機能どうしの隔離は、機能ごとに1ブロックずつ書く。glob に後方参照が無く、
-  # lib/ui/<feature>/<種別>/ という2階層を一般形として表現できないためである
-  # ($TARGET_DIR は対象ファイルの親ディレクトリを指すため、機能の境界に届かない)。
-  # 機能を追加したらここにも追加する。追加漏れは tool/check_import_rules.sh が
-  # 検出するため、規約が黙って緩むことはない。
+  # glob に後方参照が無く、$TARGET_DIR は親ディレクトリまでしか指さないため、
+  # 機能の隔離は機能ごとに1ブロックずつ書く。
   - reason: 機能どうしは直接依存しない。共有したいものは ui/core へ上げる。
     target: lib/ui/auth/**
     disallow: lib/ui/**

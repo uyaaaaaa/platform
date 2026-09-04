@@ -8,10 +8,6 @@ class CachedResponse {
   final DateTime fetchedAt;
 }
 
-/// API レスポンスをエンドポイント単位でそのまま保存する。
-///
-/// サーバーのスキーマをクライアントに複製しないため、テーブルは1つで足りる。
-/// リレーショナルなミラーを持たない決定がここに現れている。
 abstract class ResponseCache {
   Future<CachedResponse?> read(String key);
 
@@ -23,7 +19,6 @@ abstract class ResponseCache {
 
   Future<void> remove(String key);
 
-  /// 認証ユーザーが切り替わったときに、そのユーザーの分だけを破棄する。
   Future<void> clearUser(String userId);
 }
 
@@ -34,7 +29,9 @@ class SqfliteResponseCache implements ResponseCache {
 
   final Database _db;
 
-  static Future<SqfliteResponseCache> open({String fileName = 'cache.db'}) async {
+  static Future<SqfliteResponseCache> open({
+    String fileName = 'cache.db',
+  }) async {
     final path = p.join(await getDatabasesPath(), fileName);
     final db = await openDatabase(
       path,

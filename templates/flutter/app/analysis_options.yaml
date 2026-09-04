@@ -1,7 +1,5 @@
 include: package:flutter_lints/flutter.yaml
 
-# 依存方向の強制は analyzer plugin で行う。ルール本体は import_rules.yaml。
-# 定義と適用を分けてあるのは、プラグインを差し替えてもルールの記述が残るようにするため。
 plugins:
   import_rules: ^0.0.8
 

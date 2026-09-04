@@ -1,11 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-/// 読み込み中・失敗・再試行の表示を1箇所に集める。
-///
-/// 予期しない失敗は原因を利用者に見せても行動につながらないため、
-/// 一律の文言と再試行だけを出す。これにより UI 層が data 層の例外型を
-/// 知る必要がなくなる。
 class AsyncValueView<T> extends StatelessWidget {
   const AsyncValueView({
     required this.value,
