@@ -1,0 +1,405 @@
+name: worker-cicd
+
+# infra 領域のファイルだが、GitHub が reusable workflow の参照先を
+# .github/workflows/ 直下に限定しているためここに置く。
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: Worker のパッケージの位置。モノレポでは worker。
+        type: string
+        default: '.'
+      node-version:
+        description: |
+          Node のバージョン。プラットフォームはツールチェーンを規約化しないため、
+          これは既定値であってプロダクトが上書きしてよい。
+        type: string
+        default: '22'
+      enable-d1:
+        description: |
+          D1 を使うか。Terraform module の enable_d1 と揃える。有効にすると
+          マイグレーションの適用と、production 適用前のエクスポートが付く。
+        type: boolean
+        default: false
+      d1-binding:
+        description: wrangler 設定での D1 の binding 名。データベース名は Terraform が生成するため、CI は binding 越しに参照する。
+        type: string
+        default: DB
+      migrations-dir:
+        description: マイグレーションの位置(working-directory からの相対)。
+        type: string
+        default: migrations
+      backup-bucket:
+        description: マイグレーション適用前のエクスポートを置く R2 バケット名。enable-d1 のとき必須。
+        type: string
+        default: ''
+      secret-prefix:
+        description: |
+          Cloudflare へ同期する GitHub Secrets のプレフィックス。同期時に
+          プレフィックスは外す(APP_SECRET_STRIPE_KEY → STRIPE_KEY)。
+        type: string
+        default: APP_SECRET_
+      wrangler-version:
+        description: プロダクトが wrangler を依存に持たない場合に使うバージョン。
+        type: string
+        default: '4'
+
+# secrets: を宣言しない。同期対象をプレフィックスで機械判定する以上列挙できず、
+# 呼び出し側の secrets: inherit に依存する。
+
+permissions:
+  contents: read
+
+jobs:
+  # git hooks と同じ規則の二重実装。片方を変えたらもう片方も変える。
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 秘密情報の検査は PR の差分だけを対象にするため、base が要る。
+          fetch-depth: 0
+
+      - name: D1 を使う場合にバックアップ先が指定されていること
+        env:
+          ENABLE_D1: ${{ inputs.enable-d1 }}
+          BACKUP_BUCKET: ${{ inputs.backup-bucket }}
+        run: |
+          set -eu
+          if [ "$ENABLE_D1" = 'true' ] && [ -z "$BACKUP_BUCKET" ]; then
+            echo "guard: enable-d1 が true のとき backup-bucket は必須です。" >&2
+            exit 1
+          fi
+
+      - name: PR タイトルが Conventional Commits であること
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          # 式を run に直接展開しない(タイトルは外部入力である)。
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -eu
+          types='build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test'
+          if ! printf '%s' "$PR_TITLE" | grep -Eq "^($types)(\([a-z0-9._/-]+\))?!?: .+"; then
+            echo "guard: PR タイトルが Conventional Commits 形式ではありません。" >&2
+            echo "  実際: $PR_TITLE" >&2
+            echo "  形式: <type>[(scope)][!]: <description>" >&2
+            echo "  type: $types" >&2
+            exit 1
+          fi
+          # wc -m はロケールによってバイト数を返し判定が揺れる。
+          max=72
+          len=$(printf '%s' "$PR_TITLE" | LC_ALL=C tr -d '\200-\277' | wc -c | tr -d ' ')
+          if [ "$len" -gt "$max" ]; then
+            echo "guard: PR タイトルが ${max} 文字を超えています (${len} 文字)。" >&2
+            exit 1
+          fi
+
+      - name: 秘密情報らしき文字列が追加されていないこと
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -eu
+          secret='gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,}|sk-[A-Za-z0-9_-]{32,}|(AKIA|ASIA)[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+          placeholder='x{4,}|example|placeholder|change_?me|dummy'
+
+          base=$(git merge-base "origin/$BASE_REF" HEAD)
+
+          # パイプの while はサブシェルで走り、status が外へ残らない。
+          changed="$RUNNER_TEMP/changed-files.txt"
+          # quotePath を切らないと、非 ASCII のファイル名が "\346..." に化けて
+          # 続く git diff が空振りし、検査を素通りする。
+          git -c core.quotePath=false diff --name-only --diff-filter=ACM "$base" HEAD > "$changed"
+
+          status=0
+          # 既存行は公開済みであり、ここで止めても手遅れなので追加行のみを見る。
+          while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            case "$file" in
+              *.example|*.sample|*.template) continue ;;
+              .env|.env.*|*/.env|*/.env.*)
+                echo "guard: 環境変数ファイルが含まれています: $file" >&2
+                status=1
+                continue
+                ;;
+            esac
+
+            hits=$(git diff -U0 "$base" HEAD -- "$file" | grep '^+' | grep -v '^+++' | grep -E "$secret" | grep -ivE "$placeholder" || true)
+            if [ -n "$hits" ]; then
+              echo "guard: 秘密情報らしき文字列を検出しました: $file" >&2
+              status=1
+            fi
+          done < "$changed"
+          exit "$status"
+
+      - name: --env なしのデプロイが書かれていないこと
+        run: |
+          set -eu
+          # 対象を呼び出し箇所へ絞る。文書中の記述まで落とすと規約を説明できなくなる。
+          hits=$(grep -rnE 'wrangler[[:space:]]+(deploy|versions[[:space:]]+upload)' \
+                   --include=package.json --include=Makefile \
+                   --include='*.sh' --include='*.yml' --include='*.yaml' \
+                   --exclude-dir=.git --exclude-dir=node_modules . \
+                 | grep -v -- '--env' || true)
+          if [ -n "$hits" ]; then
+            echo "guard: --env を伴わない wrangler deploy があります。" >&2
+            printf '%s\n' "$hits" >&2
+            echo "  デプロイは常に --env preview / --env production を指定してください。" >&2
+            exit 1
+          fi
+
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - run: npm ci
+
+      - run: npm run test
+
+      - name: wrangler を解決する
+        env:
+          WRANGLER_VERSION: ${{ inputs.wrangler-version }}
+        run: |
+          set -eu
+          if [ -x node_modules/.bin/wrangler ]; then
+            echo "WRANGLER=$(pwd)/node_modules/.bin/wrangler" >> "$GITHUB_ENV"
+          else
+            echo "WRANGLER=npx --yes wrangler@$WRANGLER_VERSION" >> "$GITHUB_ENV"
+          fi
+
+      - name: 両環境にデプロイ可能であること
+        run: |
+          set -eu
+          # --dry-run は認証を必要としないため、この job は Cloudflare の資格情報を持たない。
+          for env in preview production; do
+            $WRANGLER deploy --env "$env" --dry-run --outdir "$RUNNER_TEMP/dry-run-$env"
+          done
+
+  deploy-preview:
+    if: ${{ github.event_name == 'pull_request' }}
+    needs: [guard, test]
+    runs-on: ubuntu-latest
+    environment: preview
+    # preview は使い捨てであり、途中で打ち切って困るものが無い。
+    concurrency:
+      group: worker-cicd-preview-${{ github.repository }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      # Environment のシークレットは environment を宣言した job からしか見えないため、
+      # guard へは置けない。
+      - name: 必須シークレットが揃っていること
+        run: |
+          set -eu
+          missing=''
+          [ -n "${CLOUDFLARE_API_TOKEN:-}" ] || missing="$missing CLOUDFLARE_API_TOKEN"
+          [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] || missing="$missing CLOUDFLARE_ACCOUNT_ID"
+          if [ -n "$missing" ]; then
+            echo "シークレットが不足しています:$missing" >&2
+            echo "  呼び出し側で secrets: inherit を指定し、リポジトリまたは Environment に登録してください。" >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - run: npm ci
+
+      - name: wrangler を解決する
+        env:
+          WRANGLER_VERSION: ${{ inputs.wrangler-version }}
+        run: |
+          set -eu
+          if [ -x node_modules/.bin/wrangler ]; then
+            echo "WRANGLER=$(pwd)/node_modules/.bin/wrangler" >> "$GITHUB_ENV"
+          else
+            echo "WRANGLER=npx --yes wrangler@$WRANGLER_VERSION" >> "$GITHUB_ENV"
+          fi
+
+      - name: マイグレーションの有無を調べる
+        id: migrations
+        if: ${{ inputs.enable-d1 }}
+        env:
+          MIGRATIONS_DIR: ${{ inputs.migrations-dir }}
+        run: |
+          set -eu
+          if [ -n "$(find "$MIGRATIONS_DIR" -name '*.sql' -print -quit 2>/dev/null)" ]; then
+            echo 'found=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'found=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: D1 マイグレーションを適用する
+        if: ${{ steps.migrations.outputs.found == 'true' }}
+        env:
+          D1_BINDING: ${{ inputs.d1-binding }}
+        run: |
+          set -eu
+          # preview のデータは使い捨てであり、事前の退避は行わない。
+          $WRANGLER d1 migrations apply "$D1_BINDING" --env preview --remote
+
+      - name: preview へデプロイする
+        run: |
+          set -eu
+          $WRANGLER deploy --env preview
+
+      - name: シークレットを同期する
+        env:
+          # 値は GitHub がログ上でマスクする。
+          ALL_SECRETS: ${{ toJSON(secrets) }}
+          SECRET_PREFIX: ${{ inputs.secret-prefix }}
+        run: |
+          set -eu
+          # Worker が存在しないと secret put は失敗するため、デプロイの後に置く。
+          names=$(printf '%s' "$ALL_SECRETS" | jq -r --arg p "$SECRET_PREFIX" 'keys[] | select(startswith($p))')
+          if [ -z "$names" ]; then
+            echo "同期対象のシークレットはありません。"
+            exit 0
+          fi
+          for name in $names; do
+            target=${name#"$SECRET_PREFIX"}
+            # jq -r は末尾に改行を足す。コマンド置換で落としてから渡さないと、
+            # 改行を含んだ値が Cloudflare 側に入る。
+            value=$(printf '%s' "$ALL_SECRETS" | jq -r --arg k "$name" '.[$k]')
+            printf '%s' "$value" | $WRANGLER secret put "$target" --env preview
+            echo "synced: $target"
+          done
+
+  deploy-production:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: [guard, test]
+    runs-on: ubuntu-latest
+    environment: production
+    # マイグレーションを途中で打ち切ると適用済みの範囲が不明になる。待たせはしても
+    # 止めはしない。
+    concurrency:
+      group: worker-cicd-production-${{ github.repository }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      # Environment のシークレットは environment を宣言した job からしか見えないため、
+      # guard へは置けない。
+      - name: 必須シークレットが揃っていること
+        run: |
+          set -eu
+          missing=''
+          [ -n "${CLOUDFLARE_API_TOKEN:-}" ] || missing="$missing CLOUDFLARE_API_TOKEN"
+          [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] || missing="$missing CLOUDFLARE_ACCOUNT_ID"
+          if [ -n "$missing" ]; then
+            echo "シークレットが不足しています:$missing" >&2
+            echo "  呼び出し側で secrets: inherit を指定し、リポジトリまたは Environment に登録してください。" >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - run: npm ci
+
+      - name: wrangler を解決する
+        env:
+          WRANGLER_VERSION: ${{ inputs.wrangler-version }}
+        run: |
+          set -eu
+          if [ -x node_modules/.bin/wrangler ]; then
+            echo "WRANGLER=$(pwd)/node_modules/.bin/wrangler" >> "$GITHUB_ENV"
+          else
+            echo "WRANGLER=npx --yes wrangler@$WRANGLER_VERSION" >> "$GITHUB_ENV"
+          fi
+
+      - name: マイグレーションの有無を調べる
+        id: migrations
+        if: ${{ inputs.enable-d1 }}
+        env:
+          MIGRATIONS_DIR: ${{ inputs.migrations-dir }}
+        run: |
+          set -eu
+          # migrations apply は適用済みなら何もしないため、未適用のものを選り分けない。
+          if [ -n "$(find "$MIGRATIONS_DIR" -name '*.sql' -print -quit 2>/dev/null)" ]; then
+            echo 'found=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'found=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 適用前の D1 を R2 へ退避する
+        if: ${{ steps.migrations.outputs.found == 'true' }}
+        env:
+          D1_BINDING: ${{ inputs.d1-binding }}
+          BACKUP_BUCKET: ${{ inputs.backup-bucket }}
+          BACKUP_TOKEN: ${{ secrets.CLOUDFLARE_BACKUP_API_TOKEN }}
+          DEPLOY_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          REPOSITORY_NAME: ${{ github.event.repository.name }}
+        run: |
+          set -eu
+          # エクスポート内容は artifact にもログにも残さない。
+          out="$RUNNER_TEMP/d1-pre-migration.sql"
+          trap 'rm -f "$out"' EXIT
+          $WRANGLER d1 export "$D1_BINDING" --env production --remote --output "$out"
+
+          key="d1/$REPOSITORY_NAME/pre-migration/$(date -u +%Y%m%dT%H%M%SZ)-$GITHUB_SHA.sql"
+          CLOUDFLARE_API_TOKEN="${BACKUP_TOKEN:-$DEPLOY_TOKEN}" \
+            $WRANGLER r2 object put "$BACKUP_BUCKET/$key" --file "$out" --remote
+          echo "backup: r2://$BACKUP_BUCKET/$key"
+
+      - name: D1 マイグレーションを適用する
+        if: ${{ steps.migrations.outputs.found == 'true' }}
+        env:
+          D1_BINDING: ${{ inputs.d1-binding }}
+        run: |
+          set -eu
+          # --env と --remote を CI 側が決めるため、npm run db:migrate は呼ばない。
+          $WRANGLER d1 migrations apply "$D1_BINDING" --env production --remote
+
+      - name: production へデプロイする
+        run: |
+          set -eu
+          $WRANGLER deploy --env production
+
+      - name: シークレットを同期する
+        env:
+          ALL_SECRETS: ${{ toJSON(secrets) }}
+          SECRET_PREFIX: ${{ inputs.secret-prefix }}
+        run: |
+          set -eu
+          names=$(printf '%s' "$ALL_SECRETS" | jq -r --arg p "$SECRET_PREFIX" 'keys[] | select(startswith($p))')
+          if [ -z "$names" ]; then
+            echo "同期対象のシークレットはありません。"
+            exit 0
+          fi
+          for name in $names; do
+            target=${name#"$SECRET_PREFIX"}
+            value=$(printf '%s' "$ALL_SECRETS" | jq -r --arg k "$name" '.[$k]')
+            printf '%s' "$value" | $WRANGLER secret put "$target" --env production
+            echo "synced: $target"
+          done

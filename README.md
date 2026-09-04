@@ -2,7 +2,14 @@
 
 個人開発プロダクト群が共通利用する基盤。GitHub Actions の reusable workflows と Terraform modules を提供し、各プロダクトのリポジトリは `@v1` タグでこれらを参照する。
 
-領域を跨ぐ設計は [docs/design.md](docs/design.md) に、領域固有の設計は各テンプレート配下に定義する。
+## スコープ
+
+本書は、このリポジトリのディレクトリ構成、セットアップ手順、`v1` タグの運用、基盤変更の検証手順を定義する。
+
+次は定義しない。
+
+* 領域を跨ぐ設計、および各領域固有の設計
+* reusable workflow と Terraform module の使い方
 
 ## ディレクトリ構成
 
@@ -11,13 +18,13 @@
 ```
 templates/
   github/     # リポジトリ設定・ruleset・git hooks
-  infra/      # Terraform modules
+  infra/      # Cloudflare(Terraform modules・デプロイ)
   flutter/    # Flutter クライアント雛形
 .github/
   workflows/  # reusable workflows と本リポジトリ自身の CI
 ```
 
-reusable workflow だけは領域別にせず `.github/workflows/` 直下に置く。GitHub が他リポジトリからの参照先をこの場所に限定しているためである。
+reusable workflow は領域別にせず `.github/workflows/` 直下に置く。GitHub が他リポジトリからの参照先をこの場所に限定している。
 
 ## セットアップ
 

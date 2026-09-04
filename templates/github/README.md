@@ -1,6 +1,10 @@
 # github テンプレート
 
-GitHub のリポジトリ設定・ruleset・git hooks を置く。
+## スコープ
+
+本書は、GitHub のリポジトリ設定・ruleset・git hooks の配置と適用手順を定義する。
+
+hooks および ruleset が検査する規則の内容は定義しない。
 
 ```
 templates/github/
@@ -24,5 +28,5 @@ sh templates/github/setup.sh
 ## 規約
 
 * git hooks(Conventional Commits 検証、main への直接コミット/push 禁止、秘密情報らしき文字列の検出)は `githooks/` を正とし、`template-*` 経由で各リポジトリにコピーする。クローンごとに `setup.sh` を実行して `core.hooksPath` を向ける。
-* hooks は参照配布できず伝播しないため、強制すべき検査は reusable workflow 側にも同等の実装を置く。hooks は早期検知の補助であり、CI を正とする。
+* 強制すべき検査は reusable workflow(`worker-cicd.yml` の `guard` job)にも同じ実装を置く。hooks は参照配布できず `--no-verify` で迂回もできるため、CI を正とし、hooks は早期検知の補助とする。二重実装であり、片方を変えたらもう片方も変える。
 * GitHub のリポジトリ設定と ruleset は `gh api` を用いたスクリプトを正とし、管理画面での直接編集は行わない。
