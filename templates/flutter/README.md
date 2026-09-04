@@ -71,3 +71,5 @@ jobs:
 ```
 
 `build-ios` の既定は `false` である。macOS runner は private リポジトリでは実行時間を10倍係数で消費する。public リポジトリでは標準 runner が無料であり、その場合は `true` にしてよい。
+
+runner のラベルは `runner-linux`(既定 `ubuntu-latest`)と `runner-macos`(既定 `macos-latest`)で、Android ビルドの JDK は `java-version`(既定 `17`)で指定する。`-latest` の指す image が移行してビルドが壊れた場合は、これらに具体的なラベルを渡して退避する。

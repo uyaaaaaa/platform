@@ -152,3 +152,8 @@ Workers Free はリクエスト 10万/日 が上限であり、モバイルア�
 4. `flutter test`
 
 iOS ビルドの実行可否は workflow の入力で切り替え、既定を「実行しない」とする。macOS runner は private リポジトリでは実行時間を10倍係数で消費する。
+
+runner のラベルと JDK のバージョンも workflow の入力とする。既定は `ubuntu-latest` / `macos-latest` / `17` である。
+
+* Android ビルドの JDK は runner image の既定に任せず、入力の値を `actions/setup-java` で用意する。`flutter create` が生成する Android プロジェクトは Java 17 を要求する。
+* runner のラベルを入力にしておくのは、`-latest` の指す image が移行したときにプロダクト側で固定して退避できるようにするためである。platform は移動タグで配るため、固定できないと移行の影響を全プロダクトが同時に受ける。
