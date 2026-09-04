@@ -1,14 +1,16 @@
 # flutter 設計
 
-Flutter クライアントの標準アーキテクチャを定義する。リポジトリ構成・共通部分の配布・コスト方針といった領域を跨ぐ判断は [docs/design.md](../../docs/design.md) にある。
+## スコープ
 
-対象は iOS / Android 向けの CRUD 中心・認証ありのアプリであり、バックエンドは Cloudflare Workers + D1 である。Web・デスクトップは対象外とする。オフラインは閲覧のみを支え、書き込みはオンラインを必須とする。
+本書は Flutter クライアントの標準アーキテクチャを定義する。対象は iOS / Android 向けの、サーバーのデータを表示・編集することを主とする認証付きアプリであり、バックエンドは Cloudflare Workers + D1 である。
 
-評価軸は、保守性と変更容易性を維持しつつ複雑さを減らすことである。ここでいう複雑さとは、レイヤ数・ボイラープレート量・学習コスト・コード生成依存・1機能を追加するときに触るディレクトリ数を指す。以下の判断はすべてこの軸で下している。
+以下は定義しない。
+
+* Web・デスクトップ向けの構成
+* プロダクト固有のドメイン設計とデータモデル
+* ストアへの配布(申請・審査・証明書の運用)
 
 ## 骨格
-
-Flutter 公式の 2層 MVVM を採る。
 
 ```
 app/lib/
@@ -26,72 +28,50 @@ app/lib/
     services/          # HTTP クライアントとローカルストア。状態を持たない
 ```
 
-UI 層は feature-first、data / domain 層は type-first のハイブリッドである。Repository と Service は複数の機能から共有されるのが実態であり、機能ごとに切ると必ずどちらかの機能の下に置かれて所有者が嘘になる。UI は逆に機能ごとに閉じるため、機能を消すときにディレクトリごと消せる形にしておく。
-
-層は2つに留める。層の枚数を増やす代償は Flutter ではランタイムコストではなく認知コストであり(AOT + tree shaking により層の追加は実行時にほぼ無償である)、削る理由も増やす理由も認知コスト一本で判断する。
+UI 層は機能ごとに、data / domain 層は種別ごとに分ける。層は UI と data の2つとし、UseCase 層は置かない。
 
 ## 依存方向
-
-唯一の不変条件である。
 
 ```
 ui → data/repositories → data/services
 ui, data → domain/models
 ```
 
-* `data` から `ui` への import は禁止する。
-* `ui/<feature>` 間の直接 import は禁止する。共有したいものは `ui/core` へ上げる。
-* `domain/models` は Flutter にも他のいずれの層にも依存しない。
+* `data` から `ui`・`routing`・`config` への import を禁止する。
+* `ui/<feature>` 間の直接 import を禁止する。共有するものは `ui/core` へ上げる。
+* `ui/core` から `ui/<feature>` への import を禁止する。
+* `ui` から `data/services` への直接 import を禁止する。触れてよいのは `data/repositories` までとする。
+* `data/services` から `data/repositories` への import を禁止する。
+* `domain/models` は他のいずれの層にも Flutter にも依存しない。
 
-守るのはこの向きだけであり、層の枚数ではない。層を増やすかどうかは後述の条件で個別に判断してよいが、向きは例外を認めない。
+### 強制
 
-### 機械による強制
+ルールは `import_rules.yaml` に宣言し、analyzer plugin `import_rules` が解析時に検査する。違反の severity は `error` とする。
 
-規約は analyzer plugin で強制する。守れない規約は規約ではない、というのは `docs/design.md` が既に採っている姿勢と同じである。
+検査は `dart analyze --fatal-infos` で行う。**`flutter analyze` は使わない。** `flutter analyze` は analyzer plugin を読み込まず、依存方向の違反を1件も報告しない。`dart analyze` は plugin の診断に加えて `flutter analyze` が出すものをすべて出す。severity を既定の `info` にすると `dart analyze` の終了コードが 0 のままになる。
 
-Dart 3.10 で analyzer plugin が公式機能になり、`analysis_options.yaml` の `plugins` に宣言したプラグインの診断が通常の解析結果に混ざって出るようになった。この用途で従来使われてきた `custom_lint` は公式のプラグイン機構が存在しなかった時代の回避策であり、検査を `dart run custom_lint` として別に走らせる必要があった。検査の実行経路を1本に保てるため analyzer plugin を採る。
+### 機能どうしの隔離
 
-**検査は `dart analyze` で行う。`flutter analyze` は使わない。** Flutter 3.47.1 で確認した挙動として、`flutter analyze` は analyzer plugin を読み込まず、依存方向の違反を1件も報告しない。同じコードに対して `dart analyze` は plugin の診断に加えて `flutter analyze` が出すものをすべて出す。両者は上位互換の関係にあり、`flutter analyze` を使う理由が無い。
+`lib/ui/<feature>/` の相互依存の禁止は、機能ごとに1ブロックずつ `import_rules.yaml` に書く。`tool/check_import_rules.sh` が `lib/ui/` 配下の各機能に対応するルールの存在を検査し、CI で実行する。
 
-ルールは `import_rules` に YAML で宣言する。自前のプラグインを書かないのは、依存方向の強制が「どのディレクトリが何を import してよいか」という宣言でしかなく、コードとして表現する必要がないためである。`import_rules` で表現しきれないルールが必要になった時点で、自前プラグインを platform 側に置く判断へ切り替える。プラグインは pre-1.0 であり、壊れた場合に規約そのものが止まる。ルールの定義(`import_rules.yaml`)と適用(`analysis_options.yaml`)を分けてあるのは、プラグインを差し替えてもルールの記述が残るようにするためである。
-
-違反の severity は `error` とする。既定の `info` では `dart analyze` の終了コードが 0 のままになり、CI が緑のまま通る。
-
-### 機能どうしの隔離だけは機械的に一般化できない
-
-`lib/ui/<feature>/` の相互依存の禁止は、機能ごとに1ブロックずつ書く。glob に後方参照が無く、「対象ファイルが属する機能」を式として表現できないためである(`import_rules` の `$TARGET_DIR` は対象ファイルの親ディレクトリを指すため、`lib/ui/<feature>/<種別>/` の2階層構成では機能の境界に届かない)。
-
-これは規約が黙って緩む経路になる。機能を追加してルールを書き忘れても、何も起きないまま隔離だけが失われるためである。したがって `tool/check_import_rules.sh` で、`lib/ui/` 配下の各機能に対応するルールの存在を検査し、CI で実行する。漏れは失敗として現れる。
-
-機能ディレクトリを1階層に平坦化すればこの検査は不要になるが、`view_models/` と `widgets/` の分離は公式サンプルに倣った構成であり、規約の都合で構成を曲げる判断は採らない。
+glob に後方参照が無いため、「対象ファイルが属する機能」を1つの式では表現できない(`$TARGET_DIR` は対象ファイルの親ディレクトリを指し、`lib/ui/<feature>/<種別>/` の2階層構成では機能の境界に届かない)。ブロックを書き忘れると、その機能の隔離だけが何の表示もなく失われる。
 
 ## 状態管理
 
-Riverpod を使い、コード生成は使わない。
+Riverpod を使う。DI・状態通知・非同期状態・破棄をこれ1つで扱い、`provider` や `ChangeNotifier` と併用しない。
 
-DI・状態通知・非同期状態・破棄を1つの機構に統合できることが理由である。対抗案(`provider` + `ChangeNotifier`)ではこれらが4つの概念に散り、さらに `loading` / `error` / `retry` を画面ごとに自前で持つことになる。`AsyncValue` はこれを型として与える。`BuildContext` に依存しないため、ウィジェット木の外から組み立てられ、テストが素直になる。
+コード生成は使わない。`json_serializable` のために build_runner は導入するが、生成対象はモデルに限る。
 
-**この判断は Flutter 公式の strong 推奨からの意図的な逸脱である。** 公式は DI について `provider` パッケージを名指しで strongly recommend としている。状態管理そのものは公式も conditional 扱い(「ultimately the decision comes down to personal preference」)であり逸脱にあたらないが、DI は違う。逸脱を許すのは、公式の推奨が DI という単一の関心事に対する推奨であり、DI・状態・非同期・破棄をまとめて1つにする利得を評価対象に含んでいないためである。この利得が失われる、あるいは Riverpod が停滞した場合は `provider` へ戻す。
-
-コード生成を使わないのは、Riverpod 公式自身が「他で codegen を使っていないなら Riverpod のためだけに始める価値はない」「現状かなり遅い」と明記しているためである。本テンプレートは `json_serializable` を使うため build_runner 自体は導入されるが、生成対象をモデルに限ることでビルド時間の増加を抑える。
-
-### 自動再試行を止める
-
-**Riverpod 3 は失敗した provider を既定で自動的に再試行する**(最大10回、200ms から 6.4s までの指数バックオフ。`Error` は対象外だが `Exception` は対象になる)。これを既定のまま使わない。
-
-1画面の通信失敗が最大11回のリクエストに膨らみ、Workers Free の 10万リクエスト/日 に対して無視できない。閲覧キャッシュで抑えた分をそのまま打ち消す。また、利用者から見ると再試行ボタンを押していないのに要求が飛び続けることになり、失敗の表示と実際の挙動が食い違う。
-
-`ProviderScope` に再試行しない方針を明示し、再試行は利用者の明示的な操作としてのみ行う。要求数を予測可能に保つことを優先する。
+**自動再試行は無効にする。** `ProviderScope` に再試行しない方針を渡し、再試行は利用者の明示的な操作としてのみ行う。Riverpod 3 は失敗した provider を既定で最大10回、200ms から 6.4s の指数バックオフで再試行する。1画面の通信失敗が最大11回のリクエストになり、Workers Free の 10万リクエスト/日 を圧迫する。
 
 ## モデル
 
-* モデルは immutable とする(公式 strong 推奨)。変更は必ず新しいインスタンスの生成として現れ、UI 層での偶発的な書き換えが型として不可能になる。
-* **DTO とドメインモデルは既定で同一とする。** 分けるのは、API の形と画面が必要とする形が実際に食い違う場合に限る。公式も分離を conditional(「Use in large apps」)としており、常に分けるべきものではない。分けた瞬間に詰め替えコードが増え、フィールドを1つ足すのに2箇所を触ることになる。
-* 詰め替えは最大2段(DTO → ドメインモデル)までとする。UI 用の3つ目の形は、画面が本当に別形状を必要とする場合にその画面の `view_models/` 内でのみ認める。
-* シリアライズは `json_serializable` のみを使う。
-* **生成物(`*.g.dart`)はコミットする。** チェックアウトしたまま解析でき、生成を挟まないと壊れて見える状態を作らないためである。生成物とソースの食い違いは、CI が生成し直して差分の有無で検出する。
-
-`freezed` は当面採らない。**これは公式の recommend からの逸脱である。** Dart 3 の sealed class と pattern matching により union 型の生成需要は既に消えており、残る利得は `copyWith` と等価性である。公式自身が「モデルが多いとビルド時間が有意に伸びる」と併記しているため、この利得と釣り合うのはモデルが増えてからである。**モデル数が20を超えた時点で導入を再判断する。**
+* モデルは immutable とする。
+* DTO とドメインモデルは同一のものを使う。API が返す形と画面が必要とする形が食い違う機能でのみ、その機能で分ける。
+* 詰め替えは最大2段(DTO → ドメインモデル)までとする。UI 用の3つ目の形は、画面が別形状を必要とする場合にその画面の `view_models/` 内にのみ置く。
+* シリアライズは `json_serializable` で行う。
+* 生成物(`*.g.dart`)はコミットする。
+* モデル数が20を超えたら `freezed` を導入する。それまでは `copyWith` と等価性を手で書く。
 
 ## エラー
 
@@ -101,62 +81,54 @@ DI・状態通知・非同期状態・破棄を1つの機構に統合できる�
 |---|---|---|
 | 予期しない失敗(通信断・5xx・パース失敗) | 例外を投げる | ViewModel が `AsyncValue` として受け、`ui/core` の共通表示に載せる |
 | 予期する業務失敗(バリデーション・競合・権限) | `domain/models` の sealed 型で返す | 画面ごとに分岐して表示する |
-| プログラミングエラー | `assert` / 例外 | 修正対象であり、実行時に扱わない |
+| プログラミングエラー | `assert` / 例外 | 実行時に扱わない |
 
-`Result` 型は導入しない。**これは公式が示す設計パターンを採らない判断である。** 公式の `Result` は `ChangeNotifier` を前提とした解であり、そこでは失敗を型として運ぶ手段が他にない。Riverpod では `AsyncValue` が値・失敗・スタックトレース・再試行を既に型として持っており、`Result` を重ねると同じ失敗が2つの型で表現され、どちらを見るべきかが画面ごとに揺れる。
+汎用の `Result` 型と `Command` パターンは置かない。失敗・スタックトレース・実行中の状態は `AsyncValue` と `AsyncNotifier` が持つ。
 
-同じ理由で `Command` パターンも置かない。**これも公式の recommend からの逸脱である。** `Command` が防ぐ「実行中の二重発火」と「失敗の保持」は `AsyncNotifier` が担う。
-
-予期する業務失敗を例外にしないのは、それが呼び出し側で必ず分岐すべき正常系の一部だからである。例外にすると分岐の網羅を型が保証しなくなる。
+予期しない失敗の表示は、原因を出さず一律の文言と再試行のみとする。これにより UI 層が data 層の例外型を知らずに済む。
 
 ## キャッシュ
 
-**API レスポンスをエンドポイント単位でそのまま保存し、stale-while-revalidate で再生する。** ローカル DB にリレーショナルなミラーは持たない。
+API レスポンスをエンドポイント単位でそのまま保存し、保存済みを先に流してから取得し直した結果を流す。ローカル DB にリレーショナルなミラーは持たない。書き込みはオンラインを必須とし、送信キューと楽観的更新を持たない。
 
-要件が「直前に見た画面が見えれば十分」であるため、サーバーのスキーマをクライアントに複製する必要がない。この判断により、ローカル DB のスキーマ設計とマイグレーション、双方向同期、競合解決、送信キュー、楽観的更新がまとめて不要になる。書き込みをオンライン必須としているのはこの前提を成立させるためであり、片方だけを覆すことはできない。
-
-保管先は `sqflite` の単一テーブル(`key` / `body` / `fetched_at` / `user_id`)とする。`shared_preferences` は型が貧弱で件数が増えると破綻する。`drift` はスキーマとクエリを型で扱う道具であり、リレーショナルなミラーを持たないという決定と正面から矛盾する。`isar` / `hive` は本体が実質停滞しており採らない。
-
+* 保管先は `sqflite` の単一テーブル(`key` / `body` / `fetched_at` / `user_id`)とする。
 * 失効はエンドポイント単位に Repository が TTL を宣言する。
 * 認証ユーザーが切り替わったときは `user_id` を鍵に一括破棄する。
-* キャッシュは Repository の内部に閉じる。公式が Repository を真実の源と定義し、キャッシュをその責務としているのに従う。ViewModel はキャッシュの存在を知らない。
+* キャッシュは Repository の内部に閉じる。ViewModel はキャッシュの存在を知らない。
+* HTTP クライアントの interceptor によるキャッシュは使わない。
 
-HTTP クライアントの interceptor によるキャッシュは採らない。失効の粒度が URL に縛られて業務上の鮮度要件と一致せず、また真実の源が Repository の外に出るためである。
-
-**この判断は `docs/design.md` のコスト方針に直結する。** Workers Free はリクエスト 10万/日 が上限であり、モバイルアプリは起動のたびに API を叩きがちである。閲覧キャッシュは UX 要件であると同時に、Free 枠を守るサーキットブレーカーとして機能する。
+Workers Free はリクエスト 10万/日 が上限であり、モバイルアプリは起動のたびに API を叩く。閲覧キャッシュはこの上限に対する要求数の抑制を兼ねる。
 
 ## 認証
 
-* トークンは `flutter_secure_storage` に保管する。OS の Keychain / Keystore に委ね、鍵をアプリ側で持たない。
-* **リフレッシュは Service の責務とする。** 401 を受けてリフレッシュし元のリクエストを再送する処理は HTTP の関心事であり、Repository より下に置く。ここを上に置くと、全ての Repository が同じ再送処理を持つことになる。
-* **認証状態の真実の源は `AuthRepository` とする。** ログイン・ログアウト・トークンの失効を状態として公開し、`go_router` の redirect はこの状態のみを見る。Service はトークンを扱うが、状態は持たない。
+* トークンは `flutter_secure_storage` に保管する。
+* 401 を受けたリフレッシュと元のリクエストの再送は Service が行う。
+* 認証状態の真実の源は `AuthRepository` とする。`go_router` の redirect はこの状態のみを見る。Service はトークンを扱うが状態を持たない。
+* サインアウトはトークンの破棄とそのユーザーのキャッシュの破棄をあわせて行う。
 
 ## 置かないもの
 
-| 置かないもの | 根拠 |
-|---|---|
-| UseCase / Domain 層 | 公式は conditional 扱いであり、導入条件を「複数の Repository のデータを結合する」「極端に複雑」「複数の ViewModel で再利用する」の3つに限定している。CRUD 主体ではいずれにも当たらず、`GetItemsUseCase.call() => repo.getItems()` が画面数だけ増える。条件に当たる処理が現れた時点で、その処理にだけ導入する。後付けのコストは低い |
-| 差し替え予定のない `abstract class` | 抽象は3条件テスト(揮発性がある / 実装が2つ以上ある / テストで実物が使えない)に合格したものだけに認める。合格するのは Repository と Service である。公式が strong 推奨しているのは Repository のみであり、Service を含めるのは、Service が実際に HTTP と OS ストレージという「テストで実物が使えない」対象を包むためである |
-| Aggregate / トランザクション境界 / Application Service 層 | クライアントには原子性も真実の源も存在しない。持ち込むとサーバー責務の二重実装になり、乖離したときに最も見つけにくいバグを生む |
-
-Flutter 界隈で通称 Clean Architecture と呼ばれる `data` / `domain` / `usecase` の4層構成と UseCase の一律導入は、提唱者の原典のいずれからも支持されない。Martin は Dependency Rule のみを本体とし層の枚数を規定していないと明言し、Palermo は Onion の適用対象から小規模を明示的に除外し、Evans は戦術パターンを過度に強調したことを自認している。これは流行に逆らう判断ではなく、原典に忠実な判断である。
+* **UseCase / Domain 層。** 「複数の Repository のデータを結合する」「極端に複雑」「複数の ViewModel で再利用する」のいずれかに当たる処理が現れた時点で、その処理にだけ導入する。
+* **差し替え予定のない `abstract class`。** 抽象は3条件テスト(揮発性がある / 実装が2つ以上ある / テストで実物が使えない)に合格したものだけに置く。合格するのは Repository と Service である。
+* **Aggregate / トランザクション境界 / Application Service 層。** クライアントには原子性も真実の源も無く、置くとサーバー責務の二重実装になる。
+* **`isar` / `hive`。**
 
 ## テスト
 
 * Service・Repository・ViewModel には unit テストを書く。View には widget テストを書き、ルーティングと DI の結線を対象に含める。
-* **mock ではなく fake を作る**(公式 strong 推奨)。fake は入力と出力にしか関心がないため、書ける形に保とうとすること自体が設計を単純に保つ圧力になる。`mocktail` は fake を書くのが過剰な場面の補助に留める。
+* テストダブルは fake を作る。`mocktail` は fake を書くのが過剰な場面に限る。
 * integration テストは重要なユースケースを覆うのに十分なだけ書く。網羅は unit / widget 側で取る。
-* golden テストは `ui/core` のコンポーネントに限定する。画面全体に広げるとフォント描画差で不安定になるため、CI は Linux に固定する。
+* golden テストは `ui/core` のコンポーネントに限定し、CI は Linux に固定する。
 
 ## ローカル開発と CI
 
-`docs/design.md` のコマンド規約(`npm run dev` 等)は Node ランタイムのプロダクトを対象とする。`app/` 配下では `flutter` コマンドを正とし、薄い npm スクリプトで包み直さない。包んでも実体は `flutter` であり、規約を満たすためだけの層になる。
+`app/` 配下のコマンドは `flutter` を正とする。
 
-モノレポでは `app/` と `worker/` の変更を検知して job を分ける。Flutter 側の検査は次の4つであり、reusable workflow `flutter-ci.yml` が実行する。
+モノレポでは `paths` で変更を検知し、`app/` と `worker/` の job を分ける。`app/` の検査は次の4つであり、reusable workflow `flutter-ci.yml` が実行する。
 
-1. `dart run build_runner build` の後に `git diff --exit-code` — 生成物が最新であること
-2. `sh tool/check_import_rules.sh` — 機能の隔離ルールに漏れがないこと
-3. `dart analyze --fatal-infos` — 依存方向の違反を含む解析
+1. `dart run build_runner build` の後に `git diff --exit-code`
+2. `sh tool/check_import_rules.sh`
+3. `dart analyze --fatal-infos`
 4. `flutter test`
 
-iOS ビルドは macOS runner を必要とし、**private リポジトリでは実行時間が10倍係数で課金される**(public リポジトリでは標準 runner が無料である)。可視性はプロダクトごとの判断とし、reusable workflow の入力で iOS ビルドの実行可否を切り替える。`docs/design.md` のコスト方針は Cloudflare のランニングコストを対象としており、CI の消費はこれとは別枠として扱う。
+iOS ビルドの実行可否は workflow の入力で切り替え、既定を「実行しない」とする。macOS runner は private リポジトリでは実行時間を10倍係数で消費する。
