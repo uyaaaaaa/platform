@@ -1,7 +1,10 @@
 # infra テンプレート
 
-Cloudflare 上のインフラと、そこへ載せるための実体を置く。トポロジと運用に関する
-判断は [design.md](design.md) にある。
+## スコープ
+
+本書は、Cloudflare 向けに提供する Terraform module と reusable workflow の使い方を定義する。
+
+Cloudflare 上のトポロジと運用に関する判断は定義しない。
 
 ```
 templates/infra/
@@ -10,29 +13,21 @@ templates/infra/
 
 ## Terraform modules
 
-プロダクト側からは参照で使う。
+プロダクト側からは参照で使う。参照で配るため `setup.sh` を持たない。
 
 ```hcl
 source = "git::https://github.com/uyaaaaaa/platform.git//templates/infra/modules/<name>?ref=v1"
 ```
 
-コピー配布ではないため、他のテンプレートと違い `setup.sh` を持たない。プロダクト側で
-実行すべきものが無く、参照先を書くだけで済むためである。ただし `docs/design.md` が
-手動作業として残している state 用 R2 バケットとブートストラップ用 API トークンの作成は、
-将来ここにスクリプトとして置く余地がある。
-
-module はまだ無い。
-
 ## reusable workflow
 
 実体は [`.github/workflows/`](../../.github/workflows/) 直下にある。GitHub が他リポジトリ
-からの参照先をその場所に限定しているためであり、置き場所が強制されているだけで、中身は
-この領域に属する。使い方はここに書く。
+からの参照先をこの場所に限定している。
 
 ### worker-cicd
 
 Cloudflare Workers プロダクトのアプリ CI/CD。PR で test → preview、main へのマージで
-production まで自動で進む。プロダクト側はこれを呼ぶだけでよい。
+production まで自動で進む。
 
 ```yaml
 name: cicd
@@ -50,8 +45,7 @@ jobs:
     secrets: inherit
 ```
 
-`secrets: inherit` は必須である。Cloudflare へ同期するシークレットをプレフィックスで
-機械判定するため、workflow 側で受け取るシークレットを列挙できない。
+`secrets: inherit` は必須である。
 
 | 入力 | 既定 | 意味 |
 |---|---|---|
@@ -73,19 +67,15 @@ jobs:
 
 プロダクト側に要求するもの:
 
-* `npm run test` が定義されていること(コマンド名規約は
-  [docs/design.md](../../docs/design.md) ローカル開発)
+* `npm run test` が定義されていること
 * wrangler 設定に `env.preview` と `env.production` があること。`--dry-run` で両方を
   検査する
 * GitHub Environment `preview` / `production`。環境ごとのシークレットはここに置く
 
-環境名は入力にしていない。環境は production / preview の2つと決まっており
-([design.md](design.md))、名前を可変にすると設計とプロダクトが静かにずれる。
+環境名は入力に取らない。
 
-`guard` job は git hooks と同等の検査を行う。hooks は参照配布できず `--no-verify` で
-迂回もできるため、強制すべきものは CI を正とする。
+`guard` job は次を検査する。
 
-* PR タイトルが Conventional Commits であること(squash merge により main の件名に
-  なるのは PR タイトルである)
+* PR タイトルが Conventional Commits であること
 * 秘密情報らしき文字列・`.env` が追加されていないこと
 * `--env` を伴わない `wrangler deploy` が書かれていないこと
