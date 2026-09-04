@@ -1,10 +1,7 @@
 name: worker-cicd
 
-# Cloudflare Workers プロダクトのアプリ CI/CD。
-#
-# 設計は templates/infra/design.md、使い方と入力は templates/infra/README.md に
-# ある。実体がここにあるのは、GitHub が reusable workflow の参照先を
-# .github/workflows/ 直下に限定しているためにすぎない。
+# infra 領域のファイルだが、GitHub が reusable workflow の参照先を
+# .github/workflows/ 直下に限定しているためここに置く。
 
 on:
   workflow_call:
@@ -48,15 +45,14 @@ on:
         type: string
         default: '4'
 
-# secrets: を宣言しないのは、同期対象をプレフィックスで機械判定する以上ここで
-# 列挙できないためである。呼び出し側に secrets: inherit を要求する。
+# secrets: を宣言しない。同期対象をプレフィックスで機械判定する以上列挙できず、
+# 呼び出し側の secrets: inherit に依存する。
 
 permissions:
   contents: read
 
 jobs:
-  # templates/github/githooks/ と同じ規則の二重実装。片方を変えたらもう片方も変える
-  # (理由は templates/github/README.md 規約)。
+  # git hooks と同じ規則の二重実装。片方を変えたらもう片方も変える。
   guard:
     runs-on: ubuntu-latest
     steps:
@@ -71,7 +67,6 @@ jobs:
           BACKUP_BUCKET: ${{ inputs.backup-bucket }}
         run: |
           set -eu
-          # 落とすのは本番適用の直前ではなく PR の時点である。
           if [ "$ENABLE_D1" = 'true' ] && [ -z "$BACKUP_BUCKET" ]; then
             echo "guard: enable-d1 が true のとき backup-bucket は必須です。" >&2
             exit 1
@@ -84,8 +79,6 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           set -eu
-          # commit-msg hook はローカルのコミットしか見ない。squash merge 後に
-          # main へ残る件名を検証できるのはここだけである。
           types='build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test'
           if ! printf '%s' "$PR_TITLE" | grep -Eq "^($types)(\([a-z0-9._/-]+\))?!?: .+"; then
             echo "guard: PR タイトルが Conventional Commits 形式ではありません。" >&2
@@ -108,21 +101,19 @@ jobs:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
           set -eu
-          # 正規表現は templates/github/githooks/pre-commit と同じものである。
           secret='gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,}|sk-[A-Za-z0-9_-]{32,}|(AKIA|ASIA)[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.|-----BEGIN [A-Z ]*PRIVATE KEY-----'
           placeholder='x{4,}|example|placeholder|change_?me|dummy'
 
           base=$(git merge-base "origin/$BASE_REF" HEAD)
 
-          # 変更点を一度ファイルへ出す。パイプの while はサブシェルで走るため、
-          # ループ内で立てた印が外へ残らない。
+          # パイプの while はサブシェルで走り、status が外へ残らない。
           changed="$RUNNER_TEMP/changed-files.txt"
           # quotePath を切らないと、非 ASCII のファイル名が "\346..." に化けて
           # 続く git diff が空振りし、検査を素通りする。
           git -c core.quotePath=false diff --name-only --diff-filter=ACM "$base" HEAD > "$changed"
 
           status=0
-          # 検査対象は追加行のみ。既存行は公開済みであり、ここで止めても手遅れである。
+          # 既存行は公開済みであり、ここで止めても手遅れなので追加行のみを見る。
           while IFS= read -r file; do
             [ -n "$file" ] || continue
             case "$file" in
@@ -145,9 +136,7 @@ jobs:
       - name: --env なしのデプロイが書かれていないこと
         run: |
           set -eu
-          # CI 自身は常に --env を渡すが、プロダクト側の npm script や独自ワークフロー
-          # から素の wrangler deploy が走ると規約が抜ける。対象を呼び出し箇所へ絞るのは、
-          # 文書中の記述まで落とすと規約を説明できなくなるためである。
+          # 対象を呼び出し箇所へ絞る。文書中の記述まで落とすと規約を説明できなくなる。
           hits=$(grep -rnE 'wrangler[[:space:]]+(deploy|versions[[:space:]]+upload)' \
                    --include=package.json --include=Makefile \
                    --include='*.sh' --include='*.yml' --include='*.yaml' \
@@ -176,7 +165,6 @@ jobs:
 
       - run: npm ci
 
-      # 規約はコマンド名だけで、中身はプロダクトが決める(docs/design.md ローカル開発)。
       - run: npm run test
 
       - name: wrangler を解決する
@@ -193,8 +181,7 @@ jobs:
       - name: 両環境にデプロイ可能であること
         run: |
           set -eu
-          # --dry-run は認証を必要としないため、Cloudflare のシークレットを持たない
-          # この job で env.preview / env.production の欠落とバンドル失敗を先に落とせる。
+          # --dry-run は認証を必要としないため、この job は Cloudflare の資格情報を持たない。
           for env in preview production; do
             $WRANGLER deploy --env "$env" --dry-run --outdir "$RUNNER_TEMP/dry-run-$env"
           done
@@ -215,8 +202,8 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
-      # guard へ置けないのは、Environment のシークレットが environment を宣言した
-      # job からしか見えず、環境ごとに登録した正しい構成を不足と誤判定するためである。
+      # Environment のシークレットは environment を宣言した job からしか見えないため、
+      # guard へは置けない。
       - name: 必須シークレットが揃っていること
         run: |
           set -eu
@@ -279,13 +266,12 @@ jobs:
 
       - name: シークレットを同期する
         env:
-          # secrets: inherit で渡ってきた全シークレット。値は GitHub がログ上でマスクする。
+          # 値は GitHub がログ上でマスクする。
           ALL_SECRETS: ${{ toJSON(secrets) }}
           SECRET_PREFIX: ${{ inputs.secret-prefix }}
         run: |
           set -eu
-          # デプロイの後に置く。Worker が存在しないと secret put が失敗するためである。
-          # secret put 自体が新しいバージョンを作るので、値は直後から有効になる。
+          # Worker が存在しないと secret put は失敗するため、デプロイの後に置く。
           names=$(printf '%s' "$ALL_SECRETS" | jq -r --arg p "$SECRET_PREFIX" 'keys[] | select(startswith($p))')
           if [ -z "$names" ]; then
             echo "同期対象のシークレットはありません。"
@@ -317,8 +303,8 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
-      # guard へ置けないのは、Environment のシークレットが environment を宣言した
-      # job からしか見えず、環境ごとに登録した正しい構成を不足と誤判定するためである。
+      # Environment のシークレットは environment を宣言した job からしか見えないため、
+      # guard へは置けない。
       - name: 必須シークレットが揃っていること
         run: |
           set -eu
@@ -359,8 +345,7 @@ jobs:
           MIGRATIONS_DIR: ${{ inputs.migrations-dir }}
         run: |
           set -eu
-          # 未適用のものを選り分けず、1つでもあれば退避する側に倒す。migrations apply
-          # は適用済みなら何もしない。
+          # migrations apply は適用済みなら何もしないため、未適用のものを選り分けない。
           if [ -n "$(find "$MIGRATIONS_DIR" -name '*.sql' -print -quit 2>/dev/null)" ]; then
             echo 'found=true' >> "$GITHUB_OUTPUT"
           else
@@ -372,14 +357,12 @@ jobs:
         env:
           D1_BINDING: ${{ inputs.d1-binding }}
           BACKUP_BUCKET: ${{ inputs.backup-bucket }}
-          # 限定トークンがあれば使い、無ければデプロイ用で代替する。
           BACKUP_TOKEN: ${{ secrets.CLOUDFLARE_BACKUP_API_TOKEN }}
           DEPLOY_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           REPOSITORY_NAME: ${{ github.event.repository.name }}
         run: |
           set -eu
-          # 出力先を作業ツリーの外に置き、後続の step から拾えないようにする。
-          # エクスポート内容はログにも artifact にも残さない。
+          # エクスポート内容は artifact にもログにも残さない。
           out="$RUNNER_TEMP/d1-pre-migration.sql"
           trap 'rm -f "$out"' EXIT
           $WRANGLER d1 export "$D1_BINDING" --env production --remote --output "$out"
@@ -395,8 +378,7 @@ jobs:
           D1_BINDING: ${{ inputs.d1-binding }}
         run: |
           set -eu
-          # npm run db:migrate を呼ばないのは、対象の環境(--env)と実体への適用
-          # (--remote)を CI 側が決める必要があるためである。
+          # --env と --remote を CI 側が決めるため、npm run db:migrate は呼ばない。
           $WRANGLER d1 migrations apply "$D1_BINDING" --env production --remote
 
       - name: production へデプロイする
