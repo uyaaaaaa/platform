@@ -2,32 +2,50 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../domain/models/item.dart';
 import '../../../routing/routes.dart';
+import '../../core/widgets/async_value_view.dart';
 import '../view_models/item_editor_view_model.dart';
-import '../view_models/item_list_view_model.dart';
 
-class ItemEditorScreen extends ConsumerStatefulWidget {
+class ItemEditorScreen extends ConsumerWidget {
   const ItemEditorScreen({required this.itemId, super.key});
 
   final String itemId;
 
   @override
-  ConsumerState<ItemEditorScreen> createState() => _ItemEditorScreenState();
+  Widget build(BuildContext context, WidgetRef ref) {
+    final provider = itemEditorViewModelProvider(itemId);
+    final state = ref.watch(provider);
+
+    ref.listen(provider, (previous, next) {
+      final saved = next.value?.saved ?? false;
+      if (saved && previous?.value?.saved != true) context.go(Routes.items);
+    });
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Edit item')),
+      body: AsyncValueView(
+        value: state,
+        onRetry: () => ref.invalidate(provider),
+        builder: (context, data) => _EditorForm(itemId: itemId, initial: data),
+      ),
+    );
+  }
 }
 
-class _ItemEditorScreenState extends ConsumerState<ItemEditorScreen> {
-  final _title = TextEditingController();
-  bool _done = false;
+class _EditorForm extends ConsumerStatefulWidget {
+  const _EditorForm({required this.itemId, required this.initial});
+
+  final String itemId;
+  final ItemEditorState initial;
 
   @override
-  void initState() {
-    super.initState();
-    final items = ref.read(itemListViewModelProvider).value ?? const [];
-    final item = items.where((e) => e.id == widget.itemId).firstOrNull;
-    _title.text = item?.title ?? '';
-    _done = item?.done ?? false;
-  }
+  ConsumerState<_EditorForm> createState() => _EditorFormState();
+}
+
+class _EditorFormState extends ConsumerState<_EditorForm> {
+  late final TextEditingController _title = TextEditingController(
+    text: widget.initial.title,
+  );
 
   @override
   void dispose() {
@@ -37,54 +55,40 @@ class _ItemEditorScreenState extends ConsumerState<ItemEditorScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(itemEditorViewModelProvider);
+    final provider = itemEditorViewModelProvider(widget.itemId);
+    final state = ref.watch(provider).requireValue;
+    final viewModel = ref.read(provider.notifier);
 
-    ref.listen(itemEditorViewModelProvider, (previous, next) {
-      if (next.saved && previous?.saved != true) context.go(Routes.items);
-    });
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('Edit item')),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            TextField(
-              controller: _title,
-              decoration: InputDecoration(
-                labelText: 'タイトル',
-                errorText: state.fieldErrors['title'],
-              ),
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: _title,
+            onChanged: viewModel.changeTitle,
+            decoration: InputDecoration(
+              labelText: 'タイトル',
+              errorText: state.fieldErrors['title'],
             ),
-            SwitchListTile(
-              value: _done,
-              title: const Text('完了'),
-              onChanged: (value) => setState(() => _done = value),
+          ),
+          SwitchListTile(
+            value: state.done,
+            title: const Text('完了'),
+            onChanged: viewModel.changeDone,
+          ),
+          if (state.conflicted)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Text('他の端末で更新されています。開き直してください。'),
             ),
-            if (state.conflicted)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 8),
-                child: Text('他の端末で更新されています。開き直してください。'),
-              ),
-            const SizedBox(height: 16),
-            FilledButton(
-              onPressed: state.saving ? null : _save,
-              child: Text(state.saving ? '保存中...' : '保存'),
-            ),
-          ],
-        ),
+          const SizedBox(height: 16),
+          FilledButton(
+            onPressed: state.saving ? null : viewModel.save,
+            child: Text(state.saving ? '保存中...' : '保存'),
+          ),
+        ],
       ),
     );
-  }
-
-  void _save() {
-    final item = Item(
-      id: widget.itemId,
-      title: _title.text,
-      done: _done,
-      updatedAt: DateTime.now(),
-    );
-    ref.read(itemEditorViewModelProvider.notifier).save(item);
   }
 }

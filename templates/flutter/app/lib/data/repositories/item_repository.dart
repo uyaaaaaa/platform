@@ -44,6 +44,16 @@ class ItemRepository {
     }
   }
 
+  Future<Item> getItem(String id) async {
+    final response = await api.send('GET', '$_listPath/$id');
+    if (response.statusCode != 200) {
+      throw ApiException(
+        'GET $_listPath/$id failed with ${response.statusCode}',
+      );
+    }
+    return Item.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
   Future<ItemSaveOutcome> saveItem(Item item) async {
     final response = await api.send(
       'PUT',
