@@ -1,0 +1,102 @@
+name: flutter-ci
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: Flutter パッケージの位置。モノレポでは app。
+        type: string
+        default: app
+      flutter-version:
+        type: string
+        default: '3.47.1'
+      java-version:
+        description: Android ビルドに使う JDK。
+        type: string
+        default: '17'
+      runner-linux:
+        description: 解析・テストと Android ビルドの runner。
+        type: string
+        default: ubuntu-latest
+      runner-macos:
+        description: iOS ビルドの runner。
+        type: string
+        default: macos-latest
+      build-android:
+        description: Android のビルドを通すか。
+        type: boolean
+        default: false
+      build-ios:
+        description: iOS のビルドを通すか。
+        type: boolean
+        default: false
+
+jobs:
+  check:
+    runs-on: ${{ inputs.runner-linux }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ inputs.flutter-version }}
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+
+      - run: dart run build_runner build
+
+      - name: 生成物が最新であること
+        run: git diff --exit-code
+
+      - name: 機能の隔離ルールに漏れがないこと
+        run: sh tool/check_import_rules.sh
+
+      # flutter analyze は analyzer plugin を読み込まず、依存方向の違反を報告しない。
+      - name: 解析(依存方向の違反を含む)
+        run: dart analyze --fatal-infos
+
+      - run: flutter test
+
+  build-android:
+    if: ${{ inputs.build-android }}
+    needs: check
+    runs-on: ${{ inputs.runner-linux }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ inputs.flutter-version }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: dart run build_runner build
+      - run: flutter build apk --debug
+
+  build-ios:
+    if: ${{ inputs.build-ios }}
+    needs: check
+    runs-on: ${{ inputs.runner-macos }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ inputs.flutter-version }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: dart run build_runner build
+      - run: flutter build ios --debug --no-codesign
